@@ -3,6 +3,8 @@
 
 # Created by max on 17-5-5.
 
+from __future__ import division       # for divide operation in python 2
+
 import os
 import sys
 import time
