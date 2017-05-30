@@ -3,11 +3,12 @@
 
 # Created by max on 17-5-5.
 
-from __future__ import division       # for divide operation in python 2
+from __future__ import division  # for divide operation in python 2
 
 import os
 import sys
 import time
+import argparse
 
 import numpy as np
 import pandas as pd
@@ -20,21 +21,38 @@ from keras.layers import LSTM
 from keras.layers import Dense, Activation, Dropout
 from keras.models import Sequential, load_model
 
-gpu_id = '1,2'
-os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+TAG_POSITIVE = "anormal"
 
 DATA_FILE = "../dataset/data.csv"
 MODEL_FILE = '../models/lstm_model.h5'
-TAG_POSITIVE = "anormal"
-TRAIN_SIZE = 2000
-WINDOW_SIZE = 100
-DROPIN_COUNT = 10  # each sample randomly duplicated between 0 and 9 times, see dropin function
 
-epochs = 500
-batch_size = 50
+IS_DATA_DYNAMIC = False
+IS_SHUFFLE = False
+IS_DROPIN = False
+
+TRAIN_SIZE = 6000
+EPOCHS = 200
+BATCH_SIZE = 50
+
+WINDOW_SIZE = 100  # sub sequence length
+DROPIN_COUNT = 10  # each sample randomly duplicated between 0 and 9 times, see dropin function
 
 # fix random seed for reproducibility
 np.random.seed(1234)
+
+
+def set_gpu(gpu_id):
+    """Set the whole GPU environment
+    
+    :param gpu_id: list.
+    :return: 
+    """
+    if type(gpu_id) == list or gpu_id == None:
+        if gpu_id == None:
+            gpu_id = ''
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)[1:-1]
+    else:
+        raise TypeError("gpu_id should be a list")
 
 
 # TODO
@@ -167,10 +185,15 @@ def create_data(data, train_start, train_end,
     print("Shape of train data : ", result.shape)
 
     train = result[train_start:train_end, :]
-    np.random.shuffle(train)  # shuffles in-place
+
+    if IS_SHUFFLE:
+        np.random.shuffle(train)  # shuffles in-place
+
     X_train = train[:, :-1]
     y_train = train[:, -1]
-    X_train, y_train = dropin(X_train, y_train)
+
+    if IS_DROPIN:
+        X_train, y_train = dropin(X_train, y_train)
 
     # test data
     print("\nCreating test data...\n")
@@ -236,7 +259,7 @@ def create_model(X_train, y_train):
     start = time.time()
     model.fit(
         X_train, y_train,
-        batch_size=batch_size, epochs=epochs, validation_split=0.05)
+        batch_size=BATCH_SIZE, epochs=EPOCHS, validation_split=0.05)
     print("Training Time : ", time.time() - start)
 
     return model
@@ -367,7 +390,39 @@ def main(args):
     :param args: dynamic, will do experiments on dynamic data
     :return: 
     """
-    if len(args) > 1 and args[0] == 'dynamic':
+
+    global DATA_FILE
+    global MODEL_FILE
+    global IS_DATA_DYNAMIC
+    global IS_SHUFFLE
+    global IS_DROPIN
+    global EPOCHS
+    global BATCH_SIZE
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-data', '--data', default=DATA_FILE, help='data file')
+    parser.add_argument('-model', '--model', default=MODEL_FILE, help='model file')
+    parser.add_argument('-gpu', '--gpu', type=int, nargs='*', default=None, help='gpu id seprated by blank')
+    parser.add_argument('-epochs', '--epochs', type=int, nargs=1, default=EPOCHS)
+    parser.add_argument('-batchs', '--batch-size', type=int, nargs=1, dest='batchs', default=BATCH_SIZE)
+    parser.add_argument('-d', '--dynamic', action='store_true', default=IS_DATA_DYNAMIC)
+    parser.add_argument('-shuffle', '--shuffle', action='store_true', default=IS_SHUFFLE)
+    parser.add_argument('-dropin', '--dropin', action='store_true', default=IS_DROPIN)
+    args = parser.parse_args()
+
+    DATA_FILE = args.data
+    MODEL_FILE = args.model
+    gpu_id = args.gpu
+    IS_DATA_DYNAMIC = args.dynamic
+    IS_SHUFFLE = args.shuffle
+    IS_DROPIN = args.dropin
+    EPOCHS = args.epochs
+    BATCH_SIZE = args.batchs
+
+    # Set GPU Environment
+    set_gpu(gpu_id)
+
+    if IS_DATA_DYNAMIC:
         data = gen_data()
     else:
         data = pd.read_csv(DATA_FILE, parse_dates=True, index_col=0)
