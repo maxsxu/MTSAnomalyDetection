@@ -4,6 +4,7 @@
 # Created by max on 17-5-5.
 
 from __future__ import division  # for divide operation in python 2
+from __future__ import print_function
 
 import os
 import sys
@@ -26,7 +27,6 @@ TAG_POSITIVE = "anormal"
 DATA_FILE = "../dataset/data.csv"
 MODEL_FILE = '../models/lstm_model.h5'
 
-IS_DATA_DYNAMIC = False
 IS_SHUFFLE = False
 IS_DROPIN = False
 
@@ -55,22 +55,89 @@ def set_gpu(gpu_id):
         raise TypeError("gpu_id should be a list")
 
 
-# TODO
-class DataProcessor():
-    def __init__(self, data):
-        self.data = data
-        self.X_train = None
-        self.y_train = None
-        self.X_test = None
-        self.y_test = None
+class DataProcessor(object):
+    """Data Processing
+    """
+
+    def __init__(self, data_file):
+        """
+        Init a DataProcessor
+        :param data_file: [timestamp, v0, v1 ... , tag]
+        """
+        self.data_file = data_file
+        self.trainX = None
+        self.trainY = None
+        self.testX = None
+        self.testY = None
+
+        self.__init_data()
+
+    def __init_data(self):
+        """
+        Internal Data Initialization
+        :return: 
+        """
+
+        # Raw Dataset. contain tag
+        self.dataset = pd.read_csv(self.data_file, parse_dates=True, index_col=0)
+        # Values of Dataset
+        self.data = self.dataset['v0']
+        self.data_size = len(self.data)
+        self.train_size = int(self.data_size * 0.8)
+        self.test_size = self.data_size - self.train_size
+
+        # train data
+        print("\nCreating train data...\n")
+        train = []
+        for index in range(self.train_size - WINDOW_SIZE):
+            train.append(self.data[index: index + WINDOW_SIZE])
+        train = np.array(train)
+        train = DataProcessor.normalize(train)
+
+        if IS_SHUFFLE:
+            np.random.shuffle(train)
+
+        self.trainX = train[:, :-1]
+        self.trainY = train[:, -1]
+
+        if IS_DROPIN:
+            self.trainX, self.trainY = DataProcessor.dropin(self.trainX, self.trainY)
+
+        # test data
+        print("\nCreating test data...\n")
+        test = []
+        tag = []
+        for index in range(self.train_size, self.data_size - WINDOW_SIZE):
+            test.append(self.data[index: index + WINDOW_SIZE])
+            tag.append(self.dataset[index: index + WINDOW_SIZE].ix[-1, -1])
+        test = np.array(test)
+        test = DataProcessor.normalize(test)
+        test = np.c_[test, tag]
+
+        self.testX = test[:, :-2].astype(np.float64)
+        self.testY = test[:, -2:]
+
+        # Reshape trainX and testX to LSTM input shape
+        self.trainX = self.trainX.reshape((self.trainX.shape[0], self.trainX.shape[1], 1))
+        self.testX = self.testX.reshape((self.testX.shape[0], self.testX.shape[1], 1))
+
+        print("\nTrainX Shape: ", self.trainX.shape)
+        print("TrainY Shape: ", self.trainY.shape)
+        print("TestX Shape: ", self.testX.shape)
+        print("TestY Shape: ", self.testY.shape)
 
     @staticmethod
     def normalize(result):
+        """
+        Normalize the dataset to the same scale
+        :param result: array
+        :return: normalized array
+        """
         result_mean = result.mean()
         result_std = result.std()
         result -= result_mean
         result /= result_std
-        return result, result_mean
+        return result
 
     @staticmethod
     def dropin(X, y):
@@ -90,298 +157,180 @@ class DataProcessor():
         return np.asarray(X_hat), np.asarray(y_hat)
 
 
-# TODO
-class ModelProcessor():
-    def __index__(self):
-        pass
+class ModelProcessor(object):
+    def __init__(self, dp):
+        """Init a ModelProcessor Object
+        
+        :param dp: DataProcessor Object
+        """
+        self.dp = dp
+        self.__model = None
 
+    def get_model(self):
+        """Get model:
+        init model -> compile model -> fit model 
+        :return: 
+        """
+        self.__init_model()
+        self.__compile_model()
+        self.__fit_model()
 
-def gen_data():
-    """ 
-    Generate a synthetic wave by adding up a few sine waves and some noise
-    :return: the final wave
-    """
-    t = np.arange(0.0, 10.0, 0.01)
-    wave1 = np.sin(2 * 2 * np.pi * t)
-    noise = np.random.normal(0, 0.1, len(t))
-    wave1 = wave1 + noise
-    print(("wave1", len(wave1)))
+        return self.__model
 
-    wave2 = np.sin(2 * np.pi * t)
-    print(("wave2", len(wave2)))
+    def set_model(self, model):
+        """Set model 
+        :param model: from load_model() function 
+        :return: 
+        """
+        self.__model = model
 
-    t_anormal = np.arange(0.0, 0.5, 0.01)
-    wave3 = np.sin(10 * np.pi * t_anormal)
-    print(("wave3", len(wave3)))
+    def __init_model(self):
+        self.__model = Sequential()
+        layers = {'input': 1, 'hidden1': 64, 'hidden2': 256, 'hidden3': 100, 'output': 1}
 
-    tag = [TAG_POSITIVE] * len(t)
+        self.__model.add(LSTM(
+            input_length=WINDOW_SIZE - 1,
+            input_dim=layers['input'],
+            output_dim=layers['hidden1'],
+            return_sequences=True))
+        self.__model.add(Dropout(0.2))
 
-    # insert anormal
-    insert = int(round(0.8 * len(t)))
-    wave1[insert:insert + 50] = wave1[insert:insert + 50] + wave3
-    tag[insert:insert + 50] = [TAG_POSITIVE] * len(wave3)
+        self.__model.add(LSTM(
+            layers['hidden2'],
+            return_sequences=True))
+        self.__model.add(Dropout(0.2))
 
-    v0_data = wave1 + wave2
+        self.__model.add(LSTM(
+            layers['hidden3'],
+            return_sequences=False))
+        self.__model.add(Dropout(0.2))
 
-    data = DataFrame([v0_data, tag])
-    data = data.T
-    data.rename(columns={0: 'v0', 1: 'tag'})
+        self.__model.add(Dense(
+            output_dim=layers['output']))
+        self.__model.add(Activation("linear"))
 
-    return data
-
-
-def normalize(result):
-    """
-    Normalize the dataset to the same scale
-    :param result: array
-    :return: normalized array
-    """
-    result_mean = result.mean()
-    result_std = result.std()
-    result -= result_mean
-    result /= result_std
-    return result, result_mean
-
-
-def dropin(X, y):
-    """ 
-    Data Augmentation, the inverse of dropout, i.e. adding more samples.
-    :param X: Each row is a training sequence
-    :param y: Tne target we train and will later predict
-    :return: new augmented X, y
-    """
-    print(("X shape:", X.shape))
-    print(("y shape:", y.shape))
-    X_hat = []
-    y_hat = []
-    for i in range(0, len(X)):
-        for j in range(0, np.random.random_integers(0, DROPIN_COUNT)):
-            X_hat.append(X[i, :])
-            y_hat.append(y[i])
-    return np.asarray(X_hat), np.asarray(y_hat)
-
-
-def create_data(data, train_start, train_end,
-                test_start, test_end):
-    """
-    Split input dataset into train data and test data
-    :param data: 
-    :param train_start: 
-    :param train_end: 
-    :param test_start: 
-    :param test_end: 
-    :return: 
-    """
-    # train data
-    print("\nCreating train data...\n")
-
-    result = []
-    for index in range(train_start, train_end - WINDOW_SIZE):
-        result.append(data[index: index + WINDOW_SIZE])
-    result = np.array(result)  # shape (samples, WINDOW_SIZE)
-    result, result_mean = normalize(result)
-
-    print("Mean of train data : ", result_mean)
-    print("Shape of train data : ", result.shape)
-
-    train = result[train_start:train_end, :]
-
-    if IS_SHUFFLE:
-        np.random.shuffle(train)  # shuffles in-place
-
-    X_train = train[:, :-1]
-    y_train = train[:, -1]
-
-    if IS_DROPIN:
-        X_train, y_train = dropin(X_train, y_train)
-
-    # test data
-    print("\nCreating test data...\n")
-
-    result = []
-    for index in range(test_start, test_end - WINDOW_SIZE):
-        result.append(data[index: index + WINDOW_SIZE])
-    result = np.array(result)  # shape (samples, WINDOW_SIZE)
-    result, result_mean = normalize(result)
-
-    print("Mean of test data : ", result_mean)
-    print("Shape of test data : ", result.shape)
-
-    X_test = result[:, :-1]
-    y_test = result[:, -1]
-
-    print(("Shape of X_train", np.shape(X_train)))
-    print(("Shape of X_test", np.shape(X_test)))
-
-    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
-
-    return X_train, y_train, X_test, y_test
-
-
-def create_model(X_train, y_train):
-    """
-    Comiple and Fit LSTM Model
-    :param X_train: 
-    :param y_train: 
-    :return: 
-    """
-    model = Sequential()
-    layers = {'input': 1, 'hidden1': 64, 'hidden2': 256, 'hidden3': 100, 'output': 1}
-
-    model.add(LSTM(
-        input_length=WINDOW_SIZE - 1,
-        input_dim=layers['input'],
-        output_dim=layers['hidden1'],
-        return_sequences=True))
-    model.add(Dropout(0.2))
-
-    model.add(LSTM(
-        layers['hidden2'],
-        return_sequences=True))
-    model.add(Dropout(0.2))
-
-    model.add(LSTM(
-        layers['hidden3'],
-        return_sequences=False))
-    model.add(Dropout(0.2))
-
-    model.add(Dense(
-        output_dim=layers['output']))
-    model.add(Activation("linear"))
-
-    print("\nCompiling Model...\n")
-    start = time.time()
-    model.compile(loss="mse", optimizer="rmsprop")
-    print("Compilation Time : ", time.time() - start)
-
-    print("\nTraining Model...\n")
-    start = time.time()
-    model.fit(
-        X_train, y_train,
-        batch_size=BATCH_SIZE, epochs=EPOCHS, validation_split=0.05)
-    print("Training Time : ", time.time() - start)
-
-    return model
-
-
-def predict(model, X_test):
-    """
-    Do Prediction on X_test, return predicted
-    :param model: 
-    :param X_test: 
-    :return: 
-    """
-    try:
-        print("\nPredicting...\n")
+    def __compile_model(self):
+        print("\nCompiling Model...\n")
         start = time.time()
-        predicted = model.predict(X_test)
-        print("Prediction Time : ", time.time() - start)
+        self.__model.compile(loss="mse", optimizer="rmsprop")
+        print("Compilation Time : ", time.time() - start)
 
-        print("Reshaping predicted")
-        predicted = np.reshape(predicted, (predicted.size,))
+    def __fit_model(self):
+        print("\nTraining Model...\n")
+        start = time.time()
+        self.__model.fit(self.dp.trainX, self.dp.trainY, batch_size=BATCH_SIZE,
+                         epochs=EPOCHS, validation_split=0.05)
+        print("Training Time : ", time.time() - start)
 
-        return predicted
-    except KeyboardInterrupt:
-        print("prediction exception")
+    def predict(self, testX):
+        """
+        Do Prediction on X_test, return predicted
+        :param model: 
+        :param testX: 
+        :return: 
+        """
+        try:
+            print("\nPredicting...\n")
+            start = time.time()
+            predicted = self.__model.predict(testX)
+            print("Predicted Shape: ", predicted.shape)
+            print("Prediction Time : ", time.time() - start)
 
+            print("Reshaping predicted")
+            predicted = np.ravel(predicted)
+            # predicted = np.reshape(predicted, (predicted.size,))
 
-def threshold(error):
-    """
-    Define the threshold to get anormal point.
-    We can adjust this to get better performance
-    :param error: the |y_test - y_hat|
-    :return: 
-    """
-    return error.mean()
+            return predicted
+        except KeyboardInterrupt:
+            print("prediction exception")
 
+    @staticmethod
+    def mse(observation, prediction):
+        """Return the MSE array of two ndarray
+        
+        :param observation: ndarray 
+        :param prediction: ndarray
+        :return: 
+        """
+        return ((observation - prediction) ** 2) / len(observation)
 
-def plot(y_test, predicted):
-    """
-    Plot the result
-    :param y_test: 
-    :param predicted: 
-    :return: 
-    """
-    try:
-        plt.figure(1)
+    @staticmethod
+    def threshold(error):
+        """
+        Define the threshold to get anormal point.
+        We can adjust this to get better performance
+        :param error: the |y_test - y_hat|
+        :return: 
+        """
+        return error.mean()
 
-        ax_observation = plt.subplot(311)
-        plt.title("Observation")
-        plt.plot(y_test[:len(y_test)], 'b')
+    @staticmethod
+    def plot(testY, prediction):
+        """
+        Plot the result
+        :param testY: 
+        :param prediction: 
+        :return: 
+        """
+        try:
+            plt.figure(1)
 
-        plt.subplot(312)
-        plt.title("Prediction")
-        plt.plot(predicted[:len(y_test)], 'g')
+            ax_observation = plt.subplot(311)
+            plt.title("Observation")
+            plt.plot(testY, 'b')
 
-        plt.subplot(313)
-        plt.title("Prediction Error")
-        mse = ((y_test - predicted) ** 2) / len(y_test)
-        plt.plot(mse, 'r')
+            plt.subplot(312)
+            plt.title("Prediction")
+            plt.plot(prediction, 'g')
 
-        x = range(len(y_test))
-        y = [threshold(mse)] * len(y_test)
-        plt.plot(x, y, 'r--', lw=4)
+            plt.subplot(313)
+            plt.title("Prediction Error")
+            mse = ModelProcessor.mse(testY, prediction)
+            plt.plot(mse, 'r')
 
-        plt.show()
-    except Exception as e:
-        print("plotting exception")
-        print(str(e))
+            x = range(len(testY))
+            y = [ModelProcessor.threshold(mse)] * len(testY)
+            plt.plot(x, y, 'r--', lw=4)
 
+            plt.show()
+        except Exception as e:
+            print("plotting exception")
+            print(str(e))
 
-def evaluate(data, y_test, predicted):
-    """
-    Do Evaluation. return (precision, recall, f1)
-    :param data: 
-    :param y_test: 
-    :param predicted: 
-    :return: 
-    """
-    mse = ((y_test - predicted) ** 2) / len(y_test)
-    retrived_data = data.ix[data.index[:len(mse)]][mse > threshold(mse)]
-    tpfp = len(retrived_data)
-    print("\n[Retrived Data Size] = ", tpfp)
+    @staticmethod
+    def evaluate(dataset, testY, prediction):
+        """
+        Do Evaluation. return (precision, recall, f1)
+        :param dataset: 
+        :param testY: 
+        :param prediction: 
+        :return: 
+        """
+        testY_data = testY[:, 0].astype(np.float64)
+        mse = ModelProcessor.mse(testY_data, prediction)
+        #retrived_data = dataset.ix[dataset.index[:len(mse)]][mse > ModelProcessor.threshold(mse)]
+        retrived_data = testY[mse > ModelProcessor.threshold(mse)]
+        tpfp = len(retrived_data)
+        print("\n[Retrived Data Size] = ", tpfp)
 
-    retrived_anormal_data = retrived_data[retrived_data['tag'] == TAG_POSITIVE]
-    tp = len(retrived_anormal_data)
-    print("\n[Retrived Anormal Size] = ", tp)
+        #retrived_anormal_data = retrived_data[retrived_data['tag'] == TAG_POSITIVE]
+        retrived_anormal_data = retrived_data[retrived_data[:, 1] == TAG_POSITIVE]
+        tp = len(retrived_anormal_data)
+        print("\n[Retrived Anormal Size] = ", tp)
 
-    real_anormal_data = data[data['tag'] == TAG_POSITIVE]
-    tpfn = len(real_anormal_data)
-    print("\n[Real Anormal Size] = ", tpfn)
+        #real_anormal_data = dataset[dataset['tag'] == TAG_POSITIVE]
+        real_anormal_data = testY[testY[:, 1] == TAG_POSITIVE]
+        tpfn = len(real_anormal_data)
+        print("\n[Real Anormal Size] = ", tpfn)
 
-    precision = tp / tpfp
-    recall = tp / tpfn
-    f1 = (2 * precision * recall) / (precision + recall)
-    print("\n[Precision] = ", precision)
-    print("\n[Recall] = ", recall)
-    print("\n[F1] = ", f1)
+        precision = tp / tpfp
+        recall = tp / tpfn
+        f1 = (2 * precision * recall) / (precision + recall) if tp != 0 else 0
+        print("\n[Precision] = ", precision)
+        print("\n[Recall] = ", recall)
+        print("\n[F1] = ", f1)
 
-    return precision, recall, f1
-
-
-def run_network(data=None, model=None):
-    if data is None:
-        data = gen_data()
-        print(("Length of Data", len(data)))
-
-    print('Creating train and test data... ')
-    X_train, y_train, X_test, y_test = create_data(data['v0'], 0, TRAIN_SIZE, 0, len(data))
-
-    if model is None:
-        model = create_model(X_train, y_train)
-        model.save(MODEL_FILE)
-
-    # predict
-    predicted = predict(model, X_test)
-
-    # evaluate
-    evaluate(data, y_test, predicted)
-
-    # plot
-    plot(y_test, predicted)
-
-    return model, y_test, predicted
+        return precision, recall, f1
 
 
 def main(args):
@@ -393,27 +342,24 @@ def main(args):
 
     global DATA_FILE
     global MODEL_FILE
-    global IS_DATA_DYNAMIC
     global IS_SHUFFLE
     global IS_DROPIN
     global EPOCHS
     global BATCH_SIZE
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-data', '--data', default=DATA_FILE, help='data file')
-    parser.add_argument('-model', '--model', default=MODEL_FILE, help='model file')
+    parser.add_argument('-d', '--data', default=DATA_FILE, help='data file')
+    parser.add_argument('-m', '--model', default=MODEL_FILE, help='model file')
     parser.add_argument('-gpu', '--gpu', type=int, nargs='*', default=None, help='gpu id seprated by blank')
-    parser.add_argument('-epochs', '--epochs', type=int, nargs=1, default=EPOCHS)
-    parser.add_argument('-batchs', '--batch-size', type=int, nargs=1, dest='batchs', default=BATCH_SIZE)
-    parser.add_argument('-d', '--dynamic', action='store_true', default=IS_DATA_DYNAMIC)
-    parser.add_argument('-shuffle', '--shuffle', action='store_true', default=IS_SHUFFLE)
-    parser.add_argument('-dropin', '--dropin', action='store_true', default=IS_DROPIN)
+    parser.add_argument('-e', '--epochs', type=int, nargs=1, default=EPOCHS)
+    parser.add_argument('-b', '--batch-size', type=int, nargs=1, dest='batchs', default=BATCH_SIZE)
+    parser.add_argument('-s', '--shuffle', action='store_true', default=IS_SHUFFLE)
+    parser.add_argument('-di', '--dropin', action='store_true', default=IS_DROPIN)
     args = parser.parse_args()
 
     DATA_FILE = args.data
     MODEL_FILE = args.model
     gpu_id = args.gpu
-    IS_DATA_DYNAMIC = args.dynamic
     IS_SHUFFLE = args.shuffle
     IS_DROPIN = args.dropin
     EPOCHS = args.epochs
@@ -422,20 +368,26 @@ def main(args):
     # Set GPU Environment
     set_gpu(gpu_id)
 
-    if IS_DATA_DYNAMIC:
-        data = gen_data()
-    else:
-        data = pd.read_csv(DATA_FILE, parse_dates=True, index_col=0)
+    # Load Data
+    print('Creating train and test data... ')
+    dp = DataProcessor(DATA_FILE)
+    mp = ModelProcessor(dp)
 
-    print(("Data Size = ", len(data)))
-
-    # Load Trained Model
     if os.path.exists(MODEL_FILE):
         model = load_model(MODEL_FILE)
+        mp.set_model(model)
     else:
-        model = None
+        model = mp.get_model()
+        model.save(MODEL_FILE)
 
-    run_network(data=data, model=model)
+    # predict
+    predicted = mp.predict(dp.testX)
+
+    # evaluate
+    ModelProcessor.evaluate(dp.dataset, dp.testY, predicted)
+
+    # plot
+    ModelProcessor.plot(dp.testY[:, 0].astype(np.float64), predicted)
 
 
 if __name__ == "__main__":
