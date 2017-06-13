@@ -255,6 +255,16 @@ class ModelProcessor(object):
         return ((observation - prediction) ** 2) / len(observation)
 
     @staticmethod
+    def rmse(observation, prediction):
+        """Return the RMSE array of two ndarray
+
+        :param observation: ndarray
+        :param prediction: ndarray
+        :return:
+        """
+        return np.sqrt(((observation - prediction) ** 2) / len(observation))
+
+    @staticmethod
     def threshold(error):
         """
         Define the threshold to get anormal point.
@@ -285,11 +295,11 @@ class ModelProcessor(object):
 
             plt.subplot(313)
             plt.title("Prediction Error")
-            mse = ModelProcessor.mse(testY, prediction)
-            plt.plot(mse, 'r')
+            rmse = ModelProcessor.rmse(testY, prediction)
+            plt.plot(rmse, 'r')
 
             x = range(len(testY))
-            y = [ModelProcessor.threshold(mse)] * len(testY)
+            y = [ModelProcessor.threshold(rmse)] * len(testY)
             plt.plot(x, y, 'r--', lw=4)
 
             plt.show()
@@ -307,9 +317,9 @@ class ModelProcessor(object):
         :return: 
         """
         testY_data = testY[:, 0].astype(np.float64)
-        mse = ModelProcessor.mse(testY_data, prediction)
+        rmse = ModelProcessor.rmse(testY_data, prediction)
         #retrived_data = dataset.ix[dataset.index[:len(mse)]][mse > ModelProcessor.threshold(mse)]
-        retrived_data = testY[mse > ModelProcessor.threshold(mse)]
+        retrived_data = testY[rmse > ModelProcessor.threshold(rmse)]
         tpfp = len(retrived_data)
         print("\n[Retrived Data Size] = ", tpfp)
 
