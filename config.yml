@@ -1,0 +1,30 @@
+data:
+  trainFile: 'dataset/power_data.txt'
+  testFile: 'dataset/power_data.txt'
+  trainStart: 0
+  trainEnd: 3000
+  trainRatio: 0.8
+  isShuffle: false
+  isDropin: false
+  positiveTag: 'anormal'
+
+dataformat:
+  sep: "\t"      # ',' for csv and '\t' for table
+  header: ~
+  indexCol: ~
+  usecols: ~     # can set to [0,1] for multidimension
+  nrows: ~
+
+model:
+  modelFile: 'power.h5'
+  epochs: 120
+  batchSize: 50
+  timeSteps: 100
+  inputUnits: 10
+  outputUnits: 10
+  hiddenLayers: 3
+  hiddenUnits: 5
+  dropoutRatio: 0.2
+  validationSplit: 0.05
+  optimizer: 'adam'
+  lossFuction: 'rmse'
