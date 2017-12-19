@@ -90,5 +90,22 @@ ENV/
 # Rope project settings
 .ropeproject
 
+
+# IDEA Project Folder
 .idea/
+
+# Resource Files
+# Including Saved Models, Result Pictures, etc.
 *.h5
+*.hdf5
+*.png
+
+# dataset
+dataset/uts/
+dataset/mts/
+dataset/non-ts
+*.csv
+*.tab
+*.txt
+*.arff
+*.zip

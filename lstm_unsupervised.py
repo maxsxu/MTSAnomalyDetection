@@ -77,6 +77,10 @@ class DataProcessor(object):
         """
         self.train_data_file = train_data_file
         self.test_data_file = test_data_file
+        self.train_data = None
+        self.test_data = None
+        self.train_size = None
+        self.test_size = None
         self.train_x = None
         self.train_y = None
         self.test_x = None
@@ -134,8 +138,8 @@ class DataProcessor(object):
         self.test_y = test[:, -1]
 
         # Reshape train_x and test_x to LSTM input shape
-        self.train_x = self.train_x.reshape((self.train_x.shape[0], self.train_x.shape[1], 1))
-        self.test_x = self.test_x.reshape((self.test_x.shape[0], self.test_x.shape[1], 1))
+        self.train_x = self.train_x.reshape((self.train_x.shape[0], 1, self.train_x.shape[1]))
+        self.test_x = self.test_x.reshape((self.test_x.shape[0], 1, self.test_x.shape[1]))
 
         print("\nTrainX Shape: ", self.train_x.shape)
         print("TrainY Shape: ", self.train_y.shape)
@@ -187,9 +191,10 @@ class ModelProcessor(object):
         init model -> compile model -> fit model
         :return:
         """
-        self.__init_model()
-        self.__compile_model()
-        self.__fit_model()
+        if not self.__model:
+            self.__init_model()
+            self.__compile_model()
+            self.__fit_model()
 
         return self.__model
 
@@ -203,7 +208,9 @@ class ModelProcessor(object):
     def __init_model(self):
         self.__model = Sequential()
 
-        self.__model.add(LSTM(units=64, input_shape=(TIMESTEPS - 1, 1), return_sequences=True))
+        self.__model.add(LSTM(units=64,
+                 input_shape=(self.dp.train_x.shape[1], self.dp.train_x.shape[2]),
+                 return_sequences=True))
         self.__model.add(Dropout(0.2))
 
         self.__model.add(LSTM(units=256, return_sequences=True))
