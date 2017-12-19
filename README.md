@@ -19,9 +19,9 @@ Multidimensional Time Series Anomaly Detection (MTSAD)
 
 Columns:
 
--    **t**: datetime
--     **[features]**: *d* features.
--     **tag**: `+1` or `a` for anomaly, `-1` or `n` for normal
+- **t**: datetime.
+- **[features]**: *d* features.
+- **tag**: `+1` or `a` for anomaly, `-1` or `n` for normal.
 
 
 MTS<sup>2</sup> Format

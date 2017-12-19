@@ -56,8 +56,8 @@ try:
     from model import BiLSTMClassifier
     from processor import *
 except Exception:
-    from ensemble.model import BiLSTMClassifier
-    from ensemble.processor import *
+    from ensemblation.model import BiLSTMClassifier
+    from ensemblation.processor import *
 
 
 def stacking(data_file):

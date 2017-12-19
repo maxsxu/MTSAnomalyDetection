@@ -93,6 +93,7 @@ ENV/
 
 # IDEA Project Folder
 .idea/
+/.idea/
 
 # Resource Files
 # Including Saved Models, Result Pictures, etc.
