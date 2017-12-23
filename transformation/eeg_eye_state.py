@@ -20,6 +20,7 @@ from pandas import Series, DataFrame
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.decomposition import PCA, KernelPCA, SparsePCA
 import sklearn.metrics as metrics
+from sklearn.manifold import TSNE
 
 from matplotlib.patches import Ellipse
 
@@ -29,6 +30,7 @@ from tsbitmaps.tsbitmapper import TSBitMapper
 from util import arff
 
 DATASET_PATH = "../dataset/mts/labeled/eeg_eye_state_14d.arff"
+DATASET_PATH = "../dataset/mts/labeled/data1_occupancy_ad_5d.csv"
 
 
 def precision_score(true_y, pred_y, decimals=3):
@@ -202,52 +204,84 @@ def to_standardization(df):
     df.loc[:, df.columns[:-1]] = scaler.fit_transform(df.loc[:, df.columns[:-1]])
 
 
-def to_uts(mts):
+def to_uts(mts, transformer):
     """PCA Dimension Reduction. Convert MTS to UTS
 
     Args:
         mts (ndarray): MTS
+        transformer (class): PCA, KernelPCA, TSNE
 
     Returns:
         ndarray: UTS
 
     """
-    pca = PCA(n_components=1)
-    pca = KernelPCA(n_components=1, kernel="rbf")
-    uts = pca.fit_transform(mts)
+    model = PCA(n_components=1)
+    if transformer == KernelPCA:
+        model = KernelPCA(n_components=1, kernel="rbf")
+    elif transformer == TSNE:
+        model = TSNE(n_components=1, perplexity=40, n_iter=300)
+
+    uts = model.fit_transform(mts)
     uts = uts.reshape(-1)
     return uts
 
 
 def main(args):
+    # 0. Automatic Test
+    case_count = 10
+    transformers = [PCA, KernelPCA, TSNE]
+    threshold_range = range(0, 101)
+
     # 1. Load MTS Data
-    df = arff_to_mtss_df(DATASET_PATH, dtype=np.float, tag_type=np.int, tag_anomaly=1)
+    # df = arff_to_mtss_df(DATASET_PATH, dtype=np.float, tag_type=np.int, tag_anomaly=1)
+    df = pd.read_csv(DATASET_PATH, index_col='t')
 
     # 2. Standardization
     to_standardization(df)
 
     # 3. To UTS
     mts = df.values[:, :-1]
-    uts = to_uts(mts)
 
-    # 4. TSBitmap
-    bmp = TSBitMapper(feature_window_size=40, bins=10, level_size=3,
-                      lag_window_size=200, lead_window_size=40)
-    pred_y = bmp.fit_predict(uts)
+    for transformer in transformers:
+        uts = to_uts(mts, transformer)
 
-    true_y = df.iloc[:, -1].values
-    print("Deteced Anomalies Count = ", (pred_y == 1).sum())
-    print("Observed Anomalies Count = ", len(df[df.iloc[:, -1] == 1]))
+        # Repeat 10 experiments
+        result_scores_avg = []
+        for case in range(case_count):
+            print("Case #", case)
 
-    # Caculate Metrics
-    print("P = ", precision_score(true_y, pred_y))
-    print("R = ", recall_score(true_y, pred_y))
-    print("F1 = ", f1_score(true_y, pred_y))
+            # 4. TSBitmap
+            result_scores = []
+            for q in threshold_range:
+                bmp = TSBitMapper(feature_window_size=40, bins=10, level_size=3,
+                                  lag_window_size=200, lead_window_size=40, q=q)
+                pred_y = bmp.fit_predict(uts)
+                true_y = df.iloc[:, -1].values
 
-    # 5. Plot MTSS Anomalies
-    mts_result_df = pd.concat([df, Series(pred_y)], axis=1)
-    plot_mts_anomalies(mts_result_df, label_obserced_index=-2, label_predicted_index=-1,
-                       dataset_name=DATASET_PATH)
+                print("Q = ", q)
+                print("Deteced Anomalies Count = ", (pred_y == 1).sum())
+                print("Observed Anomalies Count = ", len(df[df.iloc[:, -1] == 1]))
+
+                # 5. Caculate Scores
+                precision = precision_score(true_y, pred_y)
+                recall = recall_score(true_y, pred_y)
+                f1 = f1_score(true_y, pred_y)
+
+                result_scores.append([q, precision, recall, f1])
+
+            result_scores_avg.append(DataFrame(result_scores).set_index(0))
+
+        # 6. Save avg scores to file
+        result_scores_avg = pd.concat(result_scores_avg)
+        result_scores_avg = result_scores_avg.groupby(result_scores_avg.index).mean().round(3)
+        pd.DataFrame(result_scores_avg).to_csv("{}-scores-{}.csv".format("occupancy", transformer.__name__),
+                                           index=True, index_label='q', header=['p', 'r', 'f1'])
+
+
+    # 6. Plot MTSS Anomalies
+    # mts_result_df = pd.concat([df, Series(pred_y)], axis=1)
+    # plot_mts_anomalies(mts_result_df, label_obserced_index=-2, label_predicted_index=-1,
+    #                    dataset_name=DATASET_PATH)
 
     # plt.plot(uts)
     # plt.title("Standardized UTS - EEG Eye State")
