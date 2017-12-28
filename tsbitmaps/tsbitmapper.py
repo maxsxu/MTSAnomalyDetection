@@ -203,6 +203,7 @@ class TSBitMapper:
         egress_lag_feat = ()
         egress_lead_feat = ()
 
+        # to SAX
         binned_ts = self.discretize_by_feat_window(ts)
         ts_len = len(binned_ts)
 
@@ -216,9 +217,11 @@ class TSBitMapper:
                 lag_chunk = binned_ts[i - lagws: i]
                 lead_chunk = binned_ts[i: i + leadws]
 
+                # get Bitmap (caculate the frequency, standardization)
                 lag_bitmap = self.get_bitmap_with_feat_window(lag_chunk)
                 lead_bitmap = self.get_bitmap_with_feat_window(lead_chunk)
 
+                # caculate anomaly score
                 scores[i] = self.bitmap_distance(lag_bitmap, lead_bitmap)
 
                 egress_lag_feat = lag_chunk[0: featws]

@@ -17,20 +17,33 @@ import matplotlib.pyplot as plt
 
 from pandas import Series, DataFrame
 
+import sklearn.metrics as metrics
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.decomposition import PCA, KernelPCA, SparsePCA
-import sklearn.metrics as metrics
 from sklearn.manifold import TSNE
 
 from matplotlib.patches import Ellipse
+
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.layers import Activation, Dropout
+from keras.models import load_model
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 
 sys.path.append(os.path.dirname(__file__))
 
 from tsbitmaps.tsbitmapper import TSBitMapper
 from util import arff
 
-DATASET_PATH = "../dataset/mts/labeled/eeg_eye_state_14d.arff"
-DATASET_PATH = "../dataset/mts/labeled/data1_occupancy_ad_5d.csv"
+DATASET_PATH = "../dataset/mts/labeled/data2_occupancy_ad_5d.csv"
+
+dataset_trainrange = {
+    "../dataset/mts/labeled/data1_occupancy_ad_5d.csv": (2900, 6654),
+    "../dataset/mts/labeled/data2_occupancy_ad_5d.csv": (3081, 6830),
+    "../dataset/mts/labeled/data3_occupancy_ad_5d.csv": (2900, 6654),
+    "../dataset/mts/labeled/eeg_eye_state_14d.csv": (9057, 11105)
+}
 
 
 def precision_score(true_y, pred_y, decimals=3):
@@ -166,38 +179,6 @@ def plot_uts_anomalies(df, label_anomaly, dataset_name):
     plt.show()
 
 
-def arff_to_mtss_df(dataset_name, dtype, tag_type, tag_anomaly):
-    """
-    ARFF file to MTSS DataFrame.
-
-    :param str dataset_name: *.arff file name
-    :param dtype dtype: dtype of values
-    :param dtype tag_type: dtype of tag
-    :return: DataFrame df
-    """
-    dataset = arff.load(open(dataset_name, "r"))
-
-    # Get values ndarray and columns (as features)
-    data = np.array(dataset['data'], dtype=dtype)
-    columns = [d[0] for d in dataset['attributes'][:-1]] + ['tag']
-
-    # Construct MTS DataFrame {t, [features], tag}
-    df = DataFrame(data=data, columns=columns)
-    df.index.name = 't'
-    df['tag'] = df['tag'].astype(tag_type)
-
-    # `+1` for anomaly, `-1` for normal
-    if tag_anomaly == 1:
-        df.loc[df['tag'] != tag_anomaly, 'tag'] = -1
-
-    return df
-
-
-def to_csv():
-    df = arff_to_mtss_df(DATASET_PATH, dtype=np.float, tag_type=np.int)
-    df.to_csv("dataset/mts/labeled/eeg_eye_state_14d.csv", index=True)
-
-
 def to_standardization(df):
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaler = StandardScaler()
@@ -229,11 +210,7 @@ def to_uts(mts, transformer):
 def main(args):
     # 0. Automatic Test
     case_count = 1
-    transformers = [PCA, KernelPCA, TSNE]
-    bins = 5
-    feature_window_size = 100
-    lead_window_size = feature_window_size * 2
-    lag_window_size = lead_window_size * 2
+    transformers = [KernelPCA, TSNE]
     threshold_range = range(0, 101, 10)
 
     # 1. Load MTS Data
@@ -247,43 +224,80 @@ def main(args):
     mts = df.values[:, :-1]
 
     for transformer in transformers:
+        print("Transformer: ", transformer.__name__)
+
         uts = to_uts(mts, transformer)
+
+        # For LSTM
+        train = []
+        train_start = dataset_trainrange[DATASET_PATH][0]
+        train_end = dataset_trainrange[DATASET_PATH][1]
+        timestep = 100
+        for index in range(train_start, train_end - timestep + 1):
+            train.append(uts[index: index + timestep])
+        train = np.array(train).astype(np.float64)
+        train_x = train[:, :-1]
+        train_y = train[:, -1]
+
+        test = []
+        for index in range(len(uts) - timestep + 1):
+            test.append(uts[index: index + timestep])
+        test = np.array(test).astype(np.float64)
+        test_x = test[:, :-1]
+        test_y = test[:, -1]
+
+        true_y = df.iloc[:, -1].values
+        true_y = true_y[timestep - 1:]
+
+        train_x = train_x.reshape((train_x.shape[0], 1, train_x.shape[1]))
+        test_x = test_x.reshape((test_x.shape[0], 1, test_x.shape[1]))
 
         # Repeat 10 experiments
         result_scores_avg = []
         for case in range(case_count):
             print("Case #", case)
 
-            # 4. TSBitmap
+            # 4. Anomaly Detection
+            # LSTM
+            model = Sequential()
+            model.add(LSTM(64, input_shape=(train_x.shape[1], train_x.shape[2]), return_sequences=True))
+            model.add(Dropout(0.2))
+            model.add(LSTM(units=256, return_sequences=True))
+            model.add(Dropout(0.2))
+            model.add(LSTM(units=100, return_sequences=False))
+            model.add(Dropout(0.2))
+            model.add(Dense(1))
+
+            model.compile(loss="mse", optimizer="rmsprop")
+            model.fit(train_x, train_y, batch_size=50, epochs=100, validation_split=0.05, verbose=2)
+
             result_scores = []
-            for feature_window_size in range(10, 100, 10):
-                for bins in range(5, 30, 5):
-                    for q in threshold_range:
-                        print("feature_window_size = ", feature_window_size, " bins = ", bins, "Q = ", q)
+            for q in threshold_range:
+                prediction = model.predict(test_x)
+                prediction = prediction.reshape(-1)
 
-                        bmp = TSBitMapper(feature_window_size=feature_window_size, bins=bins, level_size=3,
-                                          lag_window_size=lag_window_size, lead_window_size=lead_window_size, q=q)
-                        pred_y = bmp.fit_predict(uts)
-                        true_y = df.iloc[:, -1].values
+                error_rmse = np.sqrt(((test_y - prediction) ** 2) / len(test_y))
 
-                        print("Deteced Anomalies Count = ", (pred_y == 1).sum())
-                        print("Observed Anomalies Count = ", len(df[df.iloc[:, -1] == 1]))
+                threshold = np.percentile(error_rmse, q)
+                pred_y = np.full(len(error_rmse), -1)
+                pred_y[error_rmse > threshold] = 1
 
-                        # 5. Caculate Scores
-                        precision = precision_score(true_y, pred_y)
-                        recall = recall_score(true_y, pred_y)
-                        f1 = f1_score(true_y, pred_y)
+                # 5. Caculate Scores
+                precision = precision_score(true_y, pred_y)
+                recall = recall_score(true_y, pred_y)
+                f1 = f1_score(true_y, pred_y)
 
-                        result_scores.append([feature_window_size, bins, q, precision, recall, f1])
+                result_scores.append([q, precision, recall, f1])
 
-            result_scores_avg.append(DataFrame(result_scores).set_index([0, 1, 2]))
+            result_scores_avg.append(DataFrame(result_scores).set_index(0))
 
         # 6. Save avg scores to file
         result_scores_avg = pd.concat(result_scores_avg)
-        result_scores_avg = result_scores_avg.groupby(level=[0, 1, 2]).mean().round(3)
-        pd.DataFrame(result_scores_avg).to_csv("{}-scores-{}.csv".format("occupancy", transformer.__name__),
-                                               index_label=['feature_window_size', 'bins', 'q'],
-                                               header=['p', 'r', 'f1'])
+        result_scores_avg = result_scores_avg.groupby(level=0).mean().round(3)
+        pd.DataFrame(result_scores_avg).to_csv(
+            "LSTM-{}-scores-{}.csv".format(DATASET_PATH.split('/')[-1][:-4], transformer.__name__),
+            index_label='q',
+            header=['p', 'r', 'f1'])
 
     # 6. Plot MTSS Anomalies
     # mts_result_df = pd.concat([df, Series(pred_y)], axis=1)
